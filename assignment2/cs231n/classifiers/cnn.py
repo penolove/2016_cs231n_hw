@@ -169,7 +169,7 @@ class ConvNet(object):
   self.params dictionary and will be learned using the Solver class.
   """
 
-  def __init__(self, hidden_dims,hidden_dim=100, input_dim=(3, 32, 32), num_classes=10,
+  def __init__(self, hidden_dims,hidden_dim=[384,192], input_dim=(3, 32, 32), num_classes=10,
                filter_size=3,
                dropout=0, use_batchnorm=False, reg=0.0,
                weight_scale=1e-2, dtype=np.float32, seed=None,pool_period=5):
@@ -181,6 +181,7 @@ class ConvNet(object):
     self.params={}
     self.dtype=dtype
     self.pool_period=pool_period
+    self.hidden_dim=hidden_dim
     C, H, W = input_dim
 
     #used for cnn_relu_bn_maxpool
@@ -197,14 +198,20 @@ class ConvNet(object):
             self.params[ keygamma ]=np.ones(num_filters)
         C=num_filters
 
+    for i in range(len(hidden_dim)):
+      #used for affine
+      if(i==0):
+        self.params['W'+str(self.num_layers+i)]=np.random.normal(0,weight_scale,
+            (num_filters*H/(2**(len(hidden_dims)/pool_period))*W/(2**(len(hidden_dims)/pool_period)),hidden_dim[i]))
+      else:
+        self.params['W'+str(self.num_layers+i)]=np.random.normal(0,weight_scale,
+        (hidden_dim[i-1],hidden_dim[i]))
+      self.params['b'+str(self.num_layers+i)]=np.zeros(hidden_dim[i])
 
-    #used for affine
-    self.params['W'+str(self.num_layers)]=np.random.normal(0,weight_scale,
-        (num_filters*H/(2**(len(hidden_dims)/pool_period))*W/(2**(len(hidden_dims)/pool_period)),hidden_dim))
-    self.params['b'+str(self.num_layers)]=np.zeros(hidden_dim)
+
     #used for classfication
-    self.params['W'+str(self.num_layers+1)]=np.random.normal(0,weight_scale,(hidden_dim,num_classes))
-    self.params['b'+str(self.num_layers+1)]=np.zeros(num_classes)
+    self.params['W'+str(self.num_layers+len(hidden_dim))]=np.random.normal(0,weight_scale,(hidden_dim[len(hidden_dim)-1],num_classes))
+    self.params['b'+str(self.num_layers+len(hidden_dim))]=np.zeros(num_classes)
 
 
     ########use_batchnorm#################
@@ -232,7 +239,7 @@ class ConvNet(object):
 
     # Set train/test mode for batchnorm params and dropout param since they
     # behave differently during training and testing.
-
+    hidden_dim=self.hidden_dim
 
     ######## dropout ###########
     if self.dropout_param is not None:
@@ -291,13 +298,16 @@ class ConvNet(object):
       if self.use_dropout:
         current_input,dropout_cache[i]= dropout_forward(current_input,self.dropout_param)
 
-    aff_relu_out, aff_relu_cache = affine_relu_forward(current_input,
-         self.params['W'+str(self.num_layers)],
-         self.params['b'+str(self.num_layers)])
+    for i in range(len(hidden_dim)):
+      keya='W'+str(self.num_layers+i)
+      keyb='b'+str(self.num_layers+i)
+      current_input, layer_cache[keya] = affine_relu_forward(current_input,
+           self.params[keya],
+           self.params[keyb])
 
-    aff2_out, aff2_cache = affine_forward(aff_relu_out,
-         self.params['W'+str(self.num_layers+1)],
-         self.params['b'+str(self.num_layers+1)])
+    aff2_out, aff2_cache = affine_forward(current_input,
+         self.params['W'+str(self.num_layers+len(hidden_dim))],
+         self.params['b'+str(self.num_layers+len(hidden_dim))])
 
     scores=aff2_out
 
@@ -319,13 +329,16 @@ class ConvNet(object):
     loss+=0.5*self.reg*indot
     #loss+=0.5*self.reg*(np.sum(W1*W1) + np.sum(W2*W2)+ np.sum(W3*W3))
 
-    affine_dx, affine_dw, affine_db = affine_backward(gradW, aff2_cache)
-    grads['W'+str(self.num_layers+1)] = affine_dw + self.reg * self.params['W'+str(self.num_layers+1)]
-    grads['b'+str(self.num_layers+1)] = affine_db
+    dx, affine_dw, affine_db = affine_backward(gradW, aff2_cache)
+    grads['W'+str(self.num_layers+len(hidden_dim))] = affine_dw + self.reg * self.params['W'+str(self.num_layers+len(hidden_dim))]
+    grads['b'+str(self.num_layers+len(hidden_dim))] = affine_db
 
-    dx, affine_relu_dw, affine_relu_db = affine_relu_backward(affine_dx, aff_relu_cache)
-    grads['W'+str(self.num_layers)] = affine_relu_dw + self.reg * self.params['W'+str(self.num_layers)]
-    grads['b'+str(self.num_layers)] = affine_relu_db
+    for i in reversed(range(len(hidden_dim))):
+      keya='W'+str(self.num_layers+i)
+      keyb='b'+str(self.num_layers+i)
+      dx, affine_relu_dw, affine_relu_db = affine_relu_backward(dx, layer_cache[keya])
+      grads[keya] = affine_relu_dw + self.reg * self.params[keya]
+      grads[keyb] = affine_relu_db
 
     for i in reversed(range(self.num_layers-1)):
       if self.use_dropout:
