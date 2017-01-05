@@ -91,9 +91,9 @@ def svm_loss_vectorized(W, X, y, reg):
   scores_matrix=np.dot(X,W)
   #N*1 matrix
   truth_scores=scores_matrix[range(num_train),y]
-  #C*N matrix find postive elements
-  NE=(scores_matrix.T-truth_scores+1)
-  NE[y,range(num_train)]=0
+  #NxC matrix find postive elements
+  NE=(scores_matrix-truth_scores.reshape((num_train,1))+1)
+  NE[range(num_train),y]=0
   loss=sum(NE[NE>0])
 
   #############################################################################
@@ -110,13 +110,15 @@ def svm_loss_vectorized(W, X, y, reg):
   # to reuse some of the intermediate values that you used to compute the     #
   # loss.                                                                     #
   #############################################################################
-  #C*N
+  #NxC
   NE[NE<0]=0
   NE[NE>0]=1
   #awsome trick
-  col_sum=np.sum(NE,axis=0)
-  NE[y,range(num_train)]=-col_sum
-  dW=np.dot(NE,X).T
+  col_sum=np.sum(NE,axis=1)
+  #NxC
+  NE[range(num_train),y]=-col_sum
+  #DxN - NxC
+  dW=np.dot(X.T,NE)
 
   
   #dW[:,y]-=(X.T*np.sum(NE,axis=0))
